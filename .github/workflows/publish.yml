@@ -7,11 +7,32 @@ on:
         description: "Queue file to publish (YYYY-MM-DD)"
         required: true
 
+permissions:
+  contents: write
+
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Preflight
+        env:
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+        run: |
+          mkdir -p logs
+          {
+            echo "=== preflight $(date -u) ==="
+            echo "IG_USER_ID set: ${IG_USER_ID:+yes}${IG_USER_ID:-NO}"
+            echo "IG_ACCESS_TOKEN length: ${#IG_ACCESS_TOKEN}"
+            echo "--- token debug ---"
+            curl -s "https://graph.facebook.com/v21.0/me?fields=id,name&access_token=$IG_ACCESS_TOKEN" | sed "s/$IG_ACCESS_TOKEN/***/g"
+            echo
+            echo "--- ig account ---"
+            curl -s "https://graph.facebook.com/v21.0/${IG_USER_ID}?fields=id,username&access_token=$IG_ACCESS_TOKEN" | sed "s/$IG_ACCESS_TOKEN/***/g"
+            echo
+          } >> "logs/${{ inputs.date }}.log" 2>&1
 
       - name: Publish carousel
         id: pub
@@ -19,10 +40,18 @@ jobs:
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           RAW_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}
-        run: python3 scripts/publish.py "${{ inputs.date }}"
+        run: |
+          set -o pipefail
+          echo "=== publish $(date -u) ===" >> "logs/${{ inputs.date }}.log"
+          python3 scripts/publish.py "${{ inputs.date }}" 2>&1 \
+            | sed "s/$IG_ACCESS_TOKEN/***/g" \
+            | tee -a "logs/${{ inputs.date }}.log"
 
       - name: Mark queue item published
         if: success()
+        env:
+          D: ${{ inputs.date }}
+          MID: ${{ steps.pub.outputs.media_id }}
         run: |
           python3 - <<'EOF'
           import json, os
@@ -32,9 +61,13 @@ jobs:
           d["media_id"] = os.environ.get("MID", "")
           json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
           EOF
+
+      - name: Commit logs
+        if: always()
+        run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git commit -am "publish ${{ inputs.date }}" && git push
-        env:
-          D: ${{ inputs.date }}
-          MID: ${{ steps.pub.outputs.media_id }}
+          git add -A logs queue || true
+          git commit -m "run ${{ inputs.date }} [skip ci]" || echo "nothing to commit"
+          git pull --rebase --autostash origin ${{ github.ref_name }} || true
+          git push origin HEAD:${{ github.ref_name }} || true
