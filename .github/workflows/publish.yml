@@ -1,0 +1,40 @@
+name: Publish to Instagram
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Queue file to publish (YYYY-MM-DD)"
+        required: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish carousel
+        id: pub
+        env:
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          RAW_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}
+        run: python3 scripts/publish.py "${{ inputs.date }}"
+
+      - name: Mark queue item published
+        if: success()
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          p = f"queue/{os.environ['D']}.json"
+          d = json.load(open(p, encoding="utf-8"))
+          d["status"] = "published"
+          d["media_id"] = os.environ.get("MID", "")
+          json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          EOF
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git commit -am "publish ${{ inputs.date }}" && git push
+        env:
+          D: ${{ inputs.date }}
+          MID: ${{ steps.pub.outputs.media_id }}
