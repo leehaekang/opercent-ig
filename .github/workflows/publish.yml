@@ -16,6 +16,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: What is configured
+        run: |
+          mkdir -p logs
+          {
+            echo "=== configured names $(date -u) ==="
+            echo "secret names: $(echo '${{ toJSON(secrets) }}' | python3 -c "import sys,json;print(sorted(json.load(sys.stdin).keys()))")"
+            echo "variable names: $(echo '${{ toJSON(vars) }}' | python3 -c "import sys,json;print(sorted(json.load(sys.stdin).keys()))")"
+          } >> "logs/${{ inputs.date }}.log" 2>&1
+
       - name: Preflight
         env:
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
